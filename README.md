@@ -90,7 +90,7 @@ can do, the other can.
 | 3 | [Setup](#3-setup-) | Every click, start to finish |
 | 4 | [Connect your client](#4-connect-your-client-) | Every client, copy and paste |
 | 5 | [Check it worked](#5-check-it-worked-) | One command |
-| 6 | [Which surface, and what each costs](#6-which-surface-and-what-each-costs) | ~7,600 tokens a turn, or a few hundred |
+| 6 | [Which surface, and what each costs](#6-which-surface-and-what-each-costs) | Measured in Claude Code, and how to spend less |
 | 7 | [Tools](#7-tools-) | All 26, grouped by what they reach |
 | 8 | [Notes and gotchas](#8-notes-and-gotchas-) | What the API will not do |
 | 9 | [Troubleshooting](#9-troubleshooting-) | Symptom to cause |
@@ -465,39 +465,32 @@ actually landed in the grant, and one live API call.
 
 ## 6. Which surface, and what each costs
 
-Both surfaces carry the same 26 tools. They differ in when you pay for them.
+Both surfaces are the same program with the same 26 tools. The
+difference is when the model pays for them. Measured in Claude Code:
 
-| Question | MCP server | CLI |
+| | MCP server | CLI |
 |---|---|---|
-| Loaded every turn | **~7,600 tokens** | nothing |
-| Loaded when Google Photos comes up | nothing more | ~2,600, once |
-| Works on claude.ai and mobile | yes | no, there is no shell there |
-| Works in a script, cron or CI | no | yes |
-| You invoke it by | asking in plain language | typing a command |
+| Every message, with every tool loaded | 11,100 tokens | nothing |
+| Every message, Claude Code's default | 900 tokens | nothing |
+| When Google Photos comes up | nothing more, or the tools it picks | 3,800 tokens for `SKILL.md`, once |
+| 20 messages with Google Photos in 1, every tool loaded | 222,000 tokens | 3,800 tokens |
 
-An MCP server sends its whole tool list to the model on **every turn**, whether
-you mention Google Photos or not. That is the price of being connected at all,
-before you ask anything. It is not unusual, and almost nobody publishes it.
+Claude Code's [tool search](https://code.claude.com/docs/en/mcp#scale-with-mcp-tool-search)
+is on by default: it sends only the tool names and the server instructions,
+and loads a tool's full definition when the model reaches for it. An app that
+loads every tool up front pays the first line on every message, whether
+Google Photos comes up or not. With the skill added, Claude Code also lists its
+one-line description, about 160 tokens.
 
-The number above is measured, not estimated: a real `initialize` plus
-`tools/list` handshake against this build returns 31,707 bytes of tool
-definitions, which tokenises to 7,271, plus 352 tokens of server instructions.
+To spend less, turn the server off when you are not using it, which in Claude
+Code is the `/mcp` panel. `GOOGLE_PHOTOS_READ_ONLY=1` takes the 11 write tools off the list, leaving 15.
+Or install the CLI and add the server on the days it earns its place.
 
-Over twenty turns where Google Photos comes up once, that is roughly 152,000
-tokens against 2,600. When the whole conversation is about your photos, the gap
-closes and the server is the better experience, because you ask in plain
-language instead of remembering flags.
-
-### Spending less
-
-**Turn the server off when you are not using it.** In Claude Code that is
-`@google-photos` to toggle, and every client has an equivalent.
-`GOOGLE_PHOTOS_READ_ONLY=1` drops it to the 15 reading tools, measured at 3,958
-tokens.
-
-**Or install the CLI and skip the server.** All 26 tools stay reachable, the
-standing cost falls to nothing, and an agent pays only when the subject comes
-up: 372 tokens for the command listing, or 2,612 for the whole `SKILL.md`.
+Measured on 2026-09-27 with Claude Code 2.1.257 on Claude Opus 5: one
+short prompt with and without the server connected, once with
+`ENABLE_TOOL_SEARCH=false` and once with the default, the difference read
+from the API's own usage figures. `SKILL.md` was measured the same way. Other
+apps and models count tokens a little differently.
 
 ## 7. Tools 🛠️
 
@@ -651,7 +644,7 @@ protocol.
 <details>
 <summary><b>Should I use the MCP server or the CLI?</b></summary>
 
-Use the MCP server in an app with no terminal, like Claude Desktop's chat. Use the CLI anywhere commands run: an agent like Claude Code, Codex or OpenCode, a script or a cron job. The MCP server sends its full tool list to the model on every turn, and the CLI costs nothing until it runs.
+Use the MCP server in an app with no terminal, like Claude Desktop's chat. Use the CLI anywhere commands run: an agent like Claude Code, Codex or OpenCode, a script or a cron job. The MCP server's tools take up context on every message, and the CLI costs nothing until it runs.
 
 </details>
 
