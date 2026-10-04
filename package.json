@@ -1,12 +1,13 @@
 {
   "name": "@thenavidm/google-photos-mcp-cli",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Google Photos MCP server and CLI for Claude Code and AI agents. 26 tools for the photo picker, uploads, albums, enrichments, descriptions, app-created media search, and multiple Google accounts.",
   "type": "module",
   "main": "./dist/index.js",
   "bin": {
     "google-photos-mcp": "dist/index.js",
-    "google-photos-cli": "dist/index.js"
+    "google-photos-cli": "dist/index.js",
+    "google-photos-mcp-cli": "dist/npx.js"
   },
   "engines": {
     "node": ">=20"

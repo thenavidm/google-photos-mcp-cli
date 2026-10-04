@@ -10,6 +10,11 @@
 | actions/checkout | v7 | 2026-09-04 |
 | actions/setup-node | v7 | 2026-09-04 |
 
+## 1.2.1, 2026-10-04
+
+- **`npx -y @thenavidm/google-photos-mcp-cli` starts the MCP server whatever order npm keeps.** npx starts whichever binary the npm registry lists first when they share one file, and the registry does not keep the published order. For this package that happened to be the server; for 23 others it was the CLI. A third binary named after the package, on its own file, now always starts the server, and npx picks it by name.
+- **`--port 8790` works, not only `--port=8790`.** The space form fell through to the default port without a word. A bare `--port`, `--portable` or a port that is not a positive number now falls back to `GOOGLE_PHOTOS_HTTP_PORT`, then 8787, and the flag beats the environment variable.
+
 ## 1.2.0
 
 Renamed. The repository is now `google-photos-mcp-cli` and the package
