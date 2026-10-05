@@ -1,51 +1,33 @@
 /**
- * Shared plumbing every tool uses.
+ * Shared plumbing every tool uses, now on Slipway.
  *
- * Registering twenty-six tools by hand is twenty-six chances to forget an
- * annotation, leak a stack trace, or return a shape the model cannot read.
- * This wraps all of it once so a tool module only describes what it does.
+ * Tool modules keep describing themselves with a Zod shape, a risk and a
+ * handler. This adapter turns each into a Slipway tool, so the MCP server, the
+ * CLI, the write guard, annotations and errors all come from the framework
+ * instead of a copy kept in this repo.
  */
 
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { z, type ZodRawShape } from "zod";
+import { AuthError as SlipwayAuthError, SlipwayError, httpError, toolkit, z, type Risk, type Tool } from "@thenavidm/slipway";
 import type { PhotosClient } from "../api/client.js";
 import type { ClientPool } from "../api/pool.js";
-import { AuthError, PhotosError, WriteBlockedError } from "../api/errors.js";
 import { selectAccount, type Account, type Config } from "../config.js";
-import { annotationsFor, type Risk, type WriteGuard } from "../safety.js";
+import { AuthError, PhotosError } from "../api/errors.js";
 
+/** What Slipway builds once per environment: every account's client, lazily. */
+export type AppContext = {
+  pool: ClientPool;
+  config: Config;
+};
+
+/** What a handler receives: the context bound to the account this call names. */
 export type ToolContext = {
   /** Already bound to the account this call names, or the default one. */
   client: PhotosClient;
   account: Account;
   config: Config;
-  guard: WriteGuard;
 };
 
-export type ToolResult = {
-  content: { type: "text"; text: string }[];
-  isError?: boolean;
-};
-
-export function ok(data: unknown): ToolResult {
-  const text = typeof data === "string" ? data : JSON.stringify(data, null, 2);
-  return { content: [{ type: "text", text }] };
-}
-
-/**
- * Errors come back as a normal result with `isError`, not a thrown exception.
- *
- * A thrown MCP error reaches the model as a protocol failure with no
- * structure. A result it can read tells it what went wrong and usually how to
- * fix it, which is the difference between a correct retry and a give-up.
- */
-export function fail(error: unknown): ToolResult {
-  const payload =
-    error instanceof PhotosError || error instanceof AuthError || error instanceof WriteBlockedError
-      ? error.toJSON()
-      : { error: (error as Error)?.message ?? String(error) };
-  return { content: [{ type: "text", text: JSON.stringify(payload, null, 2) }], isError: true };
-}
+const kit = toolkit<AppContext>();
 
 /** The optional argument that picks an account, on every account-scoped tool. */
 export const accountArg = {
@@ -54,16 +36,6 @@ export const accountArg = {
     .optional()
     .describe(
       "Which connected Google account to act as, by the name it was configured under (or its email). Defaults to the first one. Call list_accounts to see them.",
-    ),
-};
-
-/** The confirmation argument required by every irreversible tool. */
-export const confirmArg = {
-  confirm: z
-    .boolean()
-    .default(false)
-    .describe(
-      "Must be true for this to run. The effect cannot be undone through the API, so it is refused without an explicit confirmation.",
     ),
 };
 
@@ -78,7 +50,7 @@ export const pageArgs = {
     ),
 };
 
-export type ToolSpec<S extends ZodRawShape> = {
+export type ToolSpec<S extends Shape> = {
   name: string;
   /** One line, imperative. Shown in tool pickers. */
   title: string;
@@ -94,59 +66,7 @@ export type ToolSpec<S extends ZodRawShape> = {
   summary?: (args: z.infer<z.ZodObject<S>>) => string;
 };
 
-export function defineTool<S extends ZodRawShape>(spec: ToolSpec<S>): ToolSpec<S> {
-  return spec;
-}
-
-/**
- * A tool of any shape, for the one place tools are held together in a list.
- *
- * `ToolSpec` is generic over its schema, so a list of tools with different
- * schemas has no single type: each handler takes a different argument shape
- * and function parameters are contravariant. The type safety that matters
- * lives inside each `defineTool` call, where schema and handler are checked
- * against each other. This only loosens the seam where they are collected.
- */
-export type AnyToolSpec = Omit<ToolSpec<ZodRawShape>, "handler" | "summary"> & {
-  handler: (args: never, ctx: ToolContext) => Promise<unknown>;
-  summary?: (args: never) => string;
-};
-
-export function register(
-  server: McpServer,
-  contextFor: (accountHint?: string) => ToolContext,
-  spec: AnyToolSpec,
-): void {
-  server.registerTool(
-    spec.name,
-    {
-      title: spec.title,
-      description: spec.description,
-      inputSchema: spec.schema,
-      annotations: {
-        title: spec.title,
-        ...annotationsFor(spec.risk, { public: spec.public, idempotent: spec.idempotent }),
-      },
-    },
-    // The SDK derives its callback type from the schema generic. This wrapper
-    // is generic over the same shape, but TypeScript cannot prove the two are
-    // equal through the indirection, so the cast lives at this single boundary
-    // rather than in every tool definition.
-    (async (args: Record<string, unknown>) => {
-      try {
-        const ctx = contextFor((args as { account?: string }).account);
-        if (spec.risk !== "read") {
-          const summary = spec.summary?.(args as never) ?? spec.name;
-          const confirm = (args as { confirm?: boolean }).confirm;
-          ctx.guard.check(spec.name, spec.risk, confirm, summary);
-        }
-        return ok(await spec.handler(args as never, ctx));
-      } catch (error) {
-        return fail(error);
-      }
-    }) as never,
-  );
-}
+export type AnyToolSpec = Tool<AppContext>;
 
 /**
  * Resolved lazily, on first access.
@@ -160,7 +80,6 @@ export function makeContext(
   pool: ClientPool,
   hint: string | undefined,
   config: Config,
-  guard: WriteGuard,
 ): ToolContext {
   return {
     get client(): PhotosClient {
@@ -170,7 +89,6 @@ export function makeContext(
       return selectAccount(config, hint);
     },
     config,
-    guard,
   };
 }
 
@@ -178,4 +96,53 @@ export function makeContext(
 export function clamp(value: number | undefined, fallback: number, max = 100): number {
   if (value === undefined || !Number.isFinite(value)) return fallback;
   return Math.min(Math.max(Math.trunc(value), 1), max);
+}
+
+/**
+ * Kept so tool modules read the same, but never sent: Slipway adds `confirm`
+ * to every irreversible tool itself, with one description everywhere.
+ */
+export const confirmArg = {
+  confirm: z.boolean().optional(),
+};
+
+type Shape = Record<string, z.ZodType>;
+
+/**
+ * Google's HTTP status picks the exit code: 401 and 403 are 4, 404 is 3, 429
+ * is 7, 400 is 2 and the rest 5. Google's own `status` enum and the hint that
+ * names the cause ride along, because "PERMISSION_DENIED" plus the sentence on
+ * which scope is missing is what lets a model retry correctly.
+ */
+export function toSlipway(error: PhotosError | AuthError): SlipwayError {
+  if (error instanceof AuthError) return new SlipwayAuthError(error.message, { cause: error });
+  const known = httpError(error.status, error.message);
+  return new SlipwayError(known.message, known.code, known.exitCode, {
+    status: error.status,
+    ...(error.hint ? { hint: error.hint } : {}),
+    details: { reason: error.reason },
+    cause: error,
+  });
+}
+
+export function defineTool<S extends Shape>(spec: ToolSpec<S>): Tool<AppContext> {
+  const { confirm: _confirm, ...shape } = spec.schema as Shape;
+  const handler = spec.handler as (args: Record<string, unknown>, ctx: ToolContext) => Promise<unknown>;
+  return kit.defineTool({
+    name: spec.name,
+    title: spec.title,
+    description: spec.description,
+    input: z.object(shape),
+    risk: spec.risk,
+    ...(spec.idempotent !== undefined ? { idempotent: spec.idempotent } : {}),
+    ...(spec.summary ? { summary: spec.summary as (args: Record<string, unknown>) => string } : {}),
+    // Which account acts depends on the arguments, so the context is bound per call.
+    handler: async (args, app) => {
+      try {
+        return await handler(args, makeContext(app.pool, (args as { account?: string }).account, app.config));
+      } catch (error) {
+        throw error instanceof PhotosError || error instanceof AuthError ? toSlipway(error) : error;
+      }
+    },
+  });
 }

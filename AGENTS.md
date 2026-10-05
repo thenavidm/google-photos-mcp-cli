@@ -25,17 +25,21 @@ no amount of reading this code will explain it.
 
 ```
 src/
-  index.ts        entry, arg parsing, the auth and doctor commands
-  server.ts       assembles tools, resources, prompts, instructions
+  index.ts        entry: turns on the compile cache and starts the app
+  app.ts          the Slipway app: tools, resources, prompts, settings, login.
+                  Slipway serves MCP, the CLI and --http, and owns the write
+                  guard, approvals, annotations and the audit log
+  guide.ts        server instructions, the capabilities resource, the prompts
+  login.ts        the one-time consent flow behind `login` and `auth`
   config.ts       env resolution, the scope list
-  safety.ts       confirm gating, read-only, audit log, MCP annotations
-  doctor.ts       the four checks, in the order they fail
+  doctor.ts       the four checks per account, in the order they fail
   api/
     auth.ts       refresh-token exchange, and the one-time consent flow
     client.ts     both hosts, retries, uploads, byte fetching
     errors.ts     Google's errors turned into something a model can act on
   tools/
-    kit.ts        defineTool, register, shared args
+    kit.ts        adapts the tools to Slipway, binds the account per call,
+                  and turns Google's errors into exit codes
     picker.ts     the picker flow
     albums.ts     albums and membership
     media.ts      reading and describing
@@ -49,8 +53,8 @@ src/
 1. `defineTool` in the right module. Group by what it reaches, not by endpoint.
 2. Set `risk` honestly. `destructive` means it cannot be undone through the API,
    which here means uploading, and nothing else.
-3. `destructive` tools must spread `...confirmArg` into their schema. A test
-   enforces that the two always match.
+3. Slipway adds `confirm` to every `destructive` tool itself, and a test checks
+   the four uploads are the only ones that ask for approval.
 4. Write the description for a model that cannot see the code. Say what it
    reaches, what it costs, and what will surprise the caller. Platform
    constraints belong in the description, not only in the README.

@@ -11,6 +11,7 @@
 import { z } from "zod";
 import { defineTool, clamp, pageArgs, type AnyToolSpec, accountArg } from "./kit.js";
 import { page, shapeAlbum, type RawAlbum } from "../format/items.js";
+import { UsageError } from "@thenavidm/slipway";
 
 const APP_CREATED_NOTE =
   "Only albums created by this app are listed. Albums the user made in the Google Photos app are not visible to any scope available since 2025-04-01.";
@@ -100,7 +101,7 @@ export const albumTools: AnyToolSpec[] = [
       if (mask.length === 0) {
         // Google would accept an empty mask and change nothing, which looks
         // like success. Failing loudly is more useful than a silent no-op.
-        throw new Error("Nothing to update. Pass title, cover_media_item_id, or both.");
+        throw new UsageError("Nothing to update. Pass title, cover_media_item_id, or both.");
       }
       const album = await ctx.client.request<RawAlbum>(
         "library",
@@ -186,11 +187,11 @@ export const albumTools: AnyToolSpec[] = [
 
       let enrichment: Record<string, unknown>;
       if (args.type === "text") {
-        if (!args.text) throw new Error("type 'text' needs `text`.");
+        if (!args.text) throw new UsageError("type 'text' needs `text`.");
         enrichment = { textEnrichment: { text: args.text } };
       } else if (args.type === "location") {
         if (!args.location_name || args.latitude === undefined || args.longitude === undefined) {
-          throw new Error("type 'location' needs location_name, latitude and longitude.");
+          throw new UsageError("type 'location' needs location_name, latitude and longitude.");
         }
         enrichment = {
           locationEnrichment: {
@@ -210,7 +211,7 @@ export const albumTools: AnyToolSpec[] = [
           args.destination_longitude,
         ];
         if (need.some((v) => v === undefined)) {
-          throw new Error("type 'map' needs origin_name/latitude/longitude and destination_name/latitude/longitude.");
+          throw new UsageError("type 'map' needs origin_name/latitude/longitude and destination_name/latitude/longitude.");
         }
         enrichment = {
           mapEnrichment: {

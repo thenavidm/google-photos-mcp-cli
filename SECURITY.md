@@ -44,15 +44,22 @@ hostile URL cannot collect a Google token.
 Writes work by default, because a server where every write needs a flag teaches
 people to pass that flag reflexively.
 
-Two things require `confirm: true`:
+One thing waits for your approval:
 
 **Uploading.** Google exposes no delete endpoint for media items. An upload is
 permanent as far as any API is concerned, and has to be removed by hand.
 
+Over MCP a person approves each upload where the client can ask: Claude Code
+shows its own prompt, and a client that can show forms asks with one. Each
+approval is signed, bound to that exact call and works once. Where a client can
+do neither, the model must pass `confirm: true`, and
+`GOOGLE_PHOTOS_CONFIRM=model` allows that everywhere, for an agent with no
+person to ask. In a terminal it is `--confirm`, which `--agent` never adds.
+
 `GOOGLE_PHOTOS_READ_ONLY=1` removes every write from the tool list entirely, so
 a model cannot call one. `GOOGLE_PHOTOS_ALLOW_DESTRUCTIVE=0` keeps ordinary
 writes and blocks uploading. `GOOGLE_PHOTOS_AUDIT_LOG` records every
-attempted write, allowed and blocked alike.
+attempted write, allowed and blocked alike, with who approved it.
 
 ## Prompt injection
 
@@ -66,16 +73,19 @@ that does not depend on the model behaving.
 
 ## Running over HTTP
 
-`--http` binds to `127.0.0.1` and serves `/health`.
+`--http` binds to `127.0.0.1`, serves `/health`, and refuses a request from a
+page on another site unless `GOOGLE_PHOTOS_HTTP_ALLOWED_ORIGINS` lists it,
+because a browser can send one to a server on localhost.
 
-Before binding beyond localhost, set `GOOGLE_PHOTOS_HTTP_TOKEN` to a random
-string and put it behind TLS. An open port here is upload access to somebody's
-photo library.
+It will not start on any other address without `GOOGLE_PHOTOS_HTTP_TOKEN`, which
+it then requires as a bearer token. Use a random string and put it behind TLS.
+An open port here is upload access to somebody's photo library.
 
 ## Dependencies
 
-Two, both MIT: the MCP TypeScript SDK and zod. Fewer dependencies is fewer
-places for a supply-chain problem to enter.
+Three: Slipway and the MCP TypeScript SDK it builds on, both Apache-2.0, and
+zod, MIT. Fewer dependencies is fewer places for a supply-chain problem to
+enter.
 
 ## Good-faith research
 

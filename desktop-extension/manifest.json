@@ -2,9 +2,9 @@
   "manifest_version": "0.2",
   "name": "google-photos",
   "display_name": "Google Photos",
-  "version": "1.2.1",
+  "version": "2.0.0",
   "description": "Google Photos MCP server for Claude Code and AI agents. 26 tools for the photo picker, uploads, albums, enrichments, descriptions and app-created media.",
-  "long_description": "Connects Claude to Google Photos through the Picker API and the Library API.\n\nGoogle removed whole-library read access from every third-party app on 31 March 2025, so the picker is the only route to a photo this server did not upload: it hands the user a Google-hosted URL, they choose, and Claude sees exactly what they chose. Everything else operates on media this server uploaded itself.\n\nSetup is an OAuth client in a Google Cloud project you own, which takes about ten minutes once. Run `google-photos-mcp auth` to turn the client id and secret into a refresh token, then paste all three below.\n\nAn upload cannot be undone: Google exposes no delete endpoint, so upload_from_url, upload_file, save_to_library and create_album_with_media refuse to run without an explicit confirmation.",
+  "long_description": "Connects Claude to Google Photos through the Picker API and the Library API.\n\nGoogle removed whole-library read access from every third-party app on 31 March 2025, so the picker is the only route to a photo this server did not upload: it hands the user a Google-hosted URL, they choose, and Claude sees exactly what they chose. Everything else operates on media this server uploaded itself.\n\nSetup is an OAuth client in a Google Cloud project you own, which takes about ten minutes once. Run `google-photos-mcp login` to turn the client id and secret into a refresh token, then paste all three below.\n\nAn upload cannot be undone: Google exposes no delete endpoint, so upload_from_url, upload_file, save_to_library and create_album_with_media wait for your approval.",
   "author": { "name": "Navid Moazzez", "url": "https://navid.me" },
   "repository": { "type": "git", "url": "https://github.com/thenavidm/google-photos-mcp-cli" },
   "homepage": "https://github.com/thenavidm/google-photos-mcp-cli",
@@ -58,6 +58,6 @@
   "compatibility": {
     "claude_desktop": ">=0.10.0",
     "platforms": ["darwin", "win32", "linux"],
-    "runtimes": { "node": ">=20" }
+    "runtimes": { "node": ">=22" }
   }
 }

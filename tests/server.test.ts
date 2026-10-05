@@ -1,16 +1,15 @@
 /**
- * Tests run against the built server and a faked fetch, never the network.
+ * Tests run against the tools and a faked fetch, never the network.
  *
  * The things worth pinning down are the ones that silently produce a wrong
- * answer rather than an error: a guard that lets an upload through without
- * confirmation, a read-only server that still advertises writes, a filter that
- * builds the wrong request body.
+ * answer rather than an error: an upload that is not marked irreversible, an
+ * account picked by a loose prefix, a filter that builds the wrong request body.
+ * The guard itself is Slipway's; tests/cli.test.ts checks it from the outside.
  */
 
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
-import { buildServer } from "../src/server.js";
 import { loadConfig, cleanEnv, isConfigured, missingCredentials, selectAccount } from "../src/config.js";
-import { WriteGuard } from "../src/safety.js";
+import { ClientPool } from "../src/api/pool.js";
 import { shapeItem, shapeAlbum, page } from "../src/format/items.js";
 import { ALL_TOOLS } from "../src/tools/index.js";
 
@@ -88,64 +87,7 @@ describe("config", () => {
   });
 });
 
-describe("write guard", () => {
-  it("lets reads through untouched", () => {
-    const guard = new WriteGuard(baseConfig);
-    expect(() => guard.check("list_albums", "read", undefined, "")).not.toThrow();
-  });
-
-  it("lets a reversible write through without confirmation", () => {
-    // Renaming an album is one call to undo. Requiring confirm here would
-    // train a model to pass it reflexively on the calls that matter.
-    const guard = new WriteGuard(baseConfig);
-    expect(() => guard.check("update_album", "write", undefined, "rename")).not.toThrow();
-  });
-
-  it("refuses an irreversible write without confirm", () => {
-    const guard = new WriteGuard(baseConfig);
-    expect(() => guard.check("upload_from_url", "destructive", undefined, "upload 3 files")).toThrow(
-      /confirm: true/,
-    );
-  });
-
-  it("allows an irreversible write with confirm", () => {
-    const guard = new WriteGuard(baseConfig);
-    expect(() => guard.check("upload_from_url", "destructive", true, "upload 3 files")).not.toThrow();
-  });
-
-  it("blocks every write in read-only mode, confirmed or not", () => {
-    const guard = new WriteGuard({ ...baseConfig, readOnly: true });
-    expect(() => guard.check("create_album", "write", true, "x")).toThrow(/READ_ONLY/);
-    expect(() => guard.check("upload_from_url", "destructive", true, "x")).toThrow(/READ_ONLY/);
-  });
-
-  it("blocks irreversible writes when destructive is disabled but keeps ordinary ones", () => {
-    const guard = new WriteGuard({ ...baseConfig, allowDestructive: false });
-    expect(() => guard.check("upload_from_url", "destructive", true, "x")).toThrow(/ALLOW_DESTRUCTIVE/);
-    expect(() => guard.check("create_album", "write", undefined, "x")).not.toThrow();
-  });
-});
-
 describe("tool surface", () => {
-  it("registers every tool", () => {
-    expect(buildServer(baseConfig).toolCount).toBe(ALL_TOOLS.length);
-  });
-
-  it("hides writes entirely in read-only mode rather than failing them on call", () => {
-    // A model cannot misuse a tool it cannot see. Erroring on call instead
-    // would put the refusal in the transcript on every attempt.
-    const built = buildServer({ ...baseConfig, readOnly: true });
-    expect(built.toolCount).toBe(ALL_TOOLS.filter((t) => t.risk === "read").length);
-    expect(built.toolCount).toBeLessThan(ALL_TOOLS.length);
-  });
-
-  it("puts confirm on every irreversible tool and on no other", () => {
-    for (const tool of ALL_TOOLS) {
-      const hasConfirm = "confirm" in tool.schema;
-      expect(hasConfirm, `${tool.name} confirm arg`).toBe(tool.risk === "destructive");
-    }
-  });
-
   it("gives every tool a description long enough to be useful to a model", () => {
     for (const tool of ALL_TOOLS) {
       expect(tool.description.length, `${tool.name} description`).toBeGreaterThan(80);
@@ -219,17 +161,11 @@ describe("search filters", () => {
       status: 200,
       text: async () => JSON.stringify({ mediaItems: [] }),
     });
-    const { PhotosClient } = await import("../src/api/client.js");
-    const { QuotaTracker } = await import("../src/api/quota.js");
     const { mediaTools } = await import("../src/tools/media.js");
     const tool = mediaTools.find((t) => t.name === "search_library");
-    const ctx = {
-      client: new PhotosClient(account, baseConfig, new QuotaTracker()),
-      account,
-      config: baseConfig,
-      guard: new WriteGuard(baseConfig),
-    };
-    await (tool as { handler: (a: unknown, c: unknown) => Promise<unknown> }).handler(args, ctx);
+    // What Slipway hands every tool; the kit binds the account per call.
+    const app = { pool: new ClientPool(baseConfig), config: baseConfig };
+    await (tool as { handler: (a: unknown, c: unknown) => Promise<unknown> }).handler(args, app);
     const body = fetchMock.mock.calls.at(-1)?.[1]?.body;
     return JSON.parse(body as string) as Record<string, unknown>;
   }

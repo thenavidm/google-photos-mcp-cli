@@ -14,7 +14,7 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest, windows-latest]
-        node: [20, 22]
+        node: [22, 24]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     steps:
@@ -43,11 +43,12 @@ jobs:
       - run: npm ci
       - run: npm run build
       - name: Handshake and list tools
+        # Stdin stays open while the request is answered: the MCP stdio binding stops a server whose input has ended.
         run: |
-          printf '%s\n%s\n%s\n' \
+          (printf '%s\n%s\n%s\n' \
             '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci","version":"1"}}}' \
             '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
-            '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
+            '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'; sleep 5) \
           | node dist/index.js 2>/dev/null > out.jsonl
           node -e '
             const lines = require("fs").readFileSync("out.jsonl","utf8").trim().split("\n").map(JSON.parse);

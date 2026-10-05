@@ -1,6 +1,6 @@
 {
   "name": "@thenavidm/google-photos-mcp-cli",
-  "version": "1.2.1",
+  "version": "2.0.0",
   "description": "Google Photos MCP server and CLI for Claude Code and AI agents. 26 tools for the photo picker, uploads, albums, enrichments, descriptions, app-created media search, and multiple Google accounts.",
   "type": "module",
   "main": "./dist/index.js",
@@ -10,7 +10,7 @@
     "google-photos-mcp-cli": "dist/npx.js"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "scripts": {
     "build": "tsc",
@@ -24,9 +24,8 @@
     "build:mcpb": "bash desktop-extension/build.sh"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.18.0",
-    "zod": "^3.23.8",
-    "zod-to-json-schema": "^3.25.2"
+    "@thenavidm/slipway": "^0.1.9",
+    "zod": "^4.2.0"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
@@ -56,7 +55,13 @@
     "claude",
     "claude-code",
     "ai-agents",
-    "llm-tools"
+    "llm-tools",
+    "mcp-cli",
+    "cli",
+    "google-photos-api",
+    "photos",
+    "albums",
+    "slipway"
   ],
   "files": [
     "dist",

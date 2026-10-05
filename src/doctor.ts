@@ -1,86 +1,77 @@
 /**
- * `google-photos-mcp doctor`
+ * `google-photos-cli doctor`
  *
  * The setup has four independent things that can be wrong, and they produce
- * similar symptoms from inside an MCP client, where stderr is usually hidden.
- * This checks them in the order they fail and stops at the first one, because
- * a report listing four problems when the second is caused by the first sends
- * people fixing the wrong thing.
+ * similar symptoms from inside an MCP client, where stderr is usually hidden:
+ * a credential missing, a refresh token that no longer mints an access token,
+ * a grant without a scope a tool needs, and an API that does not answer. These
+ * checks run in that order for each account and stop at the first failure,
+ * because a report listing four problems when the second is caused by the
+ * first sends people fixing the wrong thing. Slipway runs them on every
+ * `doctor`, as 1.2 did, after its own checks.
  */
 
-import { buildServer } from "./server.js";
-import { loadConfig, isConfigured, missingCredentials, SCOPES } from "./config.js";
-import { ClientPool } from "./api/pool.js";
+import type { DoctorCheck } from "@thenavidm/slipway";
+import { isConfigured, missingCredentials, SCOPES } from "./config.js";
+import type { AppContext } from "./tools/kit.js";
 
-const ok = (msg: string): void => { process.stdout.write(`  ok    ${msg}\n`); };
-const bad = (msg: string): void => { process.stdout.write(`  FAIL  ${msg}\n`); };
-const info = (msg: string): void => { process.stdout.write(`        ${msg}\n`); };
+const LOGIN = "Run `google-photos-cli login` to consent again; a refresh token never gains a scope or comes back in place.";
 
-export async function runDoctor(): Promise<number> {
-  const config = loadConfig();
-  process.stdout.write(`\ngoogle-photos-mcp doctor\n\n`);
-
-  // 1. Credentials present.
+export async function doctor(ctx: AppContext, options: { network: boolean }): Promise<DoctorCheck[]> {
+  const { config, pool } = ctx;
+  if (config.accounts.length === 0) return [];
   if (!isConfigured(config)) {
-    bad(`Missing: ${missingCredentials(config).join(", ")}`);
-    info("");
-    info("GOOGLE_PHOTOS_CLIENT_ID and GOOGLE_PHOTOS_CLIENT_SECRET come from a Google");
-    info("Cloud project you create. The README covers it step by step.");
-    info("GOOGLE_PHOTOS_REFRESH_TOKEN comes from `google-photos-mcp auth`.");
-    return 1;
-  }
-  ok("All three credentials are set");
-
-  // 2. The refresh token actually mints an access token.
-  const pool = new ClientPool(config);
-  const client = pool.for();
-  let token: string;
-  try {
-    token = await client.accessToken();
-    ok("Refresh token works, access token minted");
-  } catch (error) {
-    bad((error as Error).message);
-    return 1;
+    return [
+      {
+        name: "Missing",
+        ok: false,
+        detail: missingCredentials(config).join(", "),
+        fix: "GOOGLE_PHOTOS_CLIENT_ID and GOOGLE_PHOTOS_CLIENT_SECRET come from a Google Cloud project you create, README section 3. GOOGLE_PHOTOS_REFRESH_TOKEN comes from `google-photos-cli login`.",
+      },
+    ];
   }
 
-  // 3. The grant carries every scope the tools need. A token minted before a
-  //    scope was added keeps the old set forever, and the resulting 403s name
-  //    the endpoint rather than the missing consent.
-  try {
-    const response = await fetch(
-      `https://oauth2.googleapis.com/tokeninfo?access_token=${encodeURIComponent(token)}`,
-    );
-    const data = (await response.json()) as { scope?: string; email?: string };
-    const granted = (data.scope ?? "").split(/\s+/).filter(Boolean);
-    const missing = SCOPES.filter((s) => !granted.includes(s));
+  const checks: DoctorCheck[] = [
+    { name: "Accounts", ok: true, detail: config.accounts.map((account) => account.name).join(", ") },
+  ];
+  if (!options.network) return checks;
 
-    if (data.email) ok(`Connected as ${data.email}`);
-    if (missing.length > 0) {
-      bad(`The grant is missing ${missing.length} scope(s):`);
-      for (const scope of missing) info(`  ${scope}`);
-      info("");
-      info("Re-run `google-photos-mcp auth`. An existing refresh token is never");
-      info("upgraded in place; consenting again is the only way to add a scope.");
-      return 1;
+  for (const account of config.accounts) {
+    const at = config.accounts.length > 1 ? `${account.name}: ` : "";
+    const client = pool.for(account.name);
+
+    let token: string;
+    try {
+      token = await client.accessToken();
+      checks.push({ name: `${at}Refresh token`, ok: true, detail: "mints an access token" });
+    } catch (error) {
+      checks.push({ name: `${at}Refresh token`, ok: false, detail: (error as Error).message, fix: LOGIN });
+      continue;
     }
-    ok(`All ${SCOPES.length} scopes granted`);
-  } catch {
-    info("Could not read token info; skipping the scope check.");
+
+    // A token minted before a scope was added keeps the old set forever, and the
+    // resulting 403s name the endpoint rather than the missing consent.
+    try {
+      const response = await fetch(`https://oauth2.googleapis.com/tokeninfo?access_token=${encodeURIComponent(token)}`);
+      const data = (await response.json()) as { scope?: string; email?: string };
+      const granted = (data.scope ?? "").split(/\s+/).filter(Boolean);
+      const missing = SCOPES.filter((scope) => !granted.includes(scope));
+      if (missing.length > 0) {
+        checks.push({ name: `${at}Scopes`, ok: false, detail: `the grant is missing ${missing.join(", ")}`, fix: LOGIN });
+        continue;
+      }
+      checks.push({ name: `${at}Scopes`, ok: true, detail: `all ${SCOPES.length} granted${data.email ? `, as ${data.email}` : ""}` });
+    } catch {
+      checks.push({ name: `${at}Scopes`, ok: false, warn: true, detail: "could not read the token info, so the scopes were not checked" });
+    }
+
+    // A real call, not just a token check.
+    try {
+      await client.request("library", "/albums", { query: { pageSize: 1 } });
+      checks.push({ name: `${at}Google Photos API`, ok: true, detail: "answers" });
+    } catch (error) {
+      checks.push({ name: `${at}Google Photos API`, ok: false, detail: (error as Error).message });
+    }
   }
-
-  // 4. A real API call, not just a token check.
-  try {
-    await client.request("library", "/albums", { query: { pageSize: 1 } });
-    ok("Google Photos API reachable");
-  } catch (error) {
-    bad((error as Error).message);
-    return 1;
-  }
-
-  const built = buildServer(config);
-  ok(`${built.toolCount} tools registered${config.readOnly ? " (read-only mode: writes hidden)" : ""}`);
-
-  if (config.auditPath) info(`Audit log: ${config.auditPath}`);
-  process.stdout.write(`\nReady.\n\n`);
-  return 0;
+  return checks;
 }

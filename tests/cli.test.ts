@@ -1,177 +1,144 @@
 /**
- * The CLI adapter.
+ * The two surfaces, now that Slipway builds both from ALL_TOOLS.
  *
- * What matters here is that the shell surface is derived from the tool specs
- * rather than described a second time, so the tests that count are the ones
- * asserting parity with ALL_TOOLS and the ones covering the argv shapes a
- * person actually types.
+ * Parsing, help and the exit-code contract are Slipway's and tested there. What
+ * matters here: every tool arrives on both surfaces intact, the guard behaves as
+ * the README promises, `auth` still signs in as 1.2 named it, Google's errors
+ * keep their exit codes and their hints, and the docs stay in step with the code.
  */
 
-import { readFileSync, existsSync } from "node:fs";
-import { describe, expect, it } from "vitest";
-import { z } from "zod";
-import { flagsFor, parseArgs, isCliCommand, selectFields } from "../src/cli.js";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { EXIT } from "@thenavidm/slipway";
+import { checkApp, cli, connect } from "@thenavidm/slipway/testing";
+import { AuthError, PhotosError } from "../src/api/errors.js";
+import { app } from "../src/app.js";
 import { ALL_TOOLS } from "../src/tools/index.js";
+import { toSlipway } from "../src/tools/kit.js";
 
-describe("flagsFor", () => {
-  it("derives a flag per schema key, kebab-cased", () => {
-    const flags = flagsFor({ page_token: z.string().optional() });
-    expect(flags[0]).toMatchObject({ key: "page_token", flag: "--page-token", kind: "string" });
+const env = {};
+afterEach(() => vi.unstubAllEnvs());
+
+const CREDENTIALS = ["GOOGLE_PHOTOS_CLIENT_ID", "GOOGLE_PHOTOS_CLIENT_SECRET", "GOOGLE_PHOTOS_REFRESH_TOKEN"];
+/** The account is read from the environment, so tests set it there; nothing here reaches Google. */
+const connected = () => CREDENTIALS.forEach((name, i) => vi.stubEnv(name, ["id", "secret", "refresh"][i]!));
+const nothing = () => [...CREDENTIALS, "GOOGLE_PHOTOS_ACCOUNTS"].forEach((name) => vi.stubEnv(name, ""));
+
+describe("Google Photos on Slipway", () => {
+  it("offers every tool as a command and over MCP, under the same names", async () => {
+    const list = await cli(app, [], { env });
+    for (const tool of ALL_TOOLS) expect(list.stdout).toContain(tool.command);
+    const mcp = await connect(app, { env });
+    const names = (await mcp.listTools()).map((tool) => tool.name).sort();
+    await mcp.close();
+    expect(names).toEqual(ALL_TOOLS.map((tool) => tool.name).sort());
   });
 
-  it("reads required from the absence of .optional()", () => {
-    const flags = flagsFor({ title: z.string(), account: z.string().optional() });
-    expect(flags.find((f) => f.key === "title")?.required).toBe(true);
-    expect(flags.find((f) => f.key === "account")?.required).toBe(false);
+  it("refuses an upload without --confirm, before anything reaches Google", async () => {
+    connected();
+    const run = await cli(app, ["upload-from-url", "--urls", "https://example.com/a.jpg"], { env });
+    expect(run.code).toBe(2);
+    expect(JSON.parse(run.stderr).code).toBe("refused");
+    expect(run.stderr).toContain("--confirm");
   });
 
-  it("carries .describe() through as help", () => {
-    const flags = flagsFor({ title: z.string().describe("The album title.") });
-    expect(flags[0]?.help).toBe("The album title.");
+  it("asks for approval on the four uploads and on no other tool", async () => {
+    const mcp = await connect(app, { env });
+    const tools = await mcp.listTools();
+    await mcp.close();
+    const confirming = tools.filter((tool) => "confirm" in ((tool.inputSchema as { properties?: object }).properties ?? {})).map((tool) => tool.name);
+    expect(confirming.sort()).toEqual(["create_album_with_media", "save_to_library", "upload_file", "upload_from_url"]);
   });
 
-  it("finds the description whichever side of .optional() it was chained", () => {
-    const outer = flagsFor({ a: z.string().optional().describe("outer") });
-    const inner = flagsFor({ b: z.string().describe("inner").optional() });
-    expect(outer[0]?.help).toBe("outer");
-    expect(inner[0]?.help).toBe("inner");
+  it("hides every write when GOOGLE_PHOTOS_READ_ONLY is set", async () => {
+    const mcp = await connect(app, { env: { GOOGLE_PHOTOS_READ_ONLY: "1" } });
+    const tools = await mcp.listTools();
+    await mcp.close();
+    expect(tools.length).toBe(ALL_TOOLS.filter((tool) => tool.risk === "read").length);
+    expect(tools.every((tool) => tool.annotations?.readOnlyHint === true)).toBe(true);
   });
 
-  it("exposes an enum's values as choices", () => {
-    const flags = flagsFor({ media_type: z.enum(["photo", "video"]).optional() });
-    expect(flags[0]).toMatchObject({ kind: "enum", choices: ["photo", "video"] });
+  it("blocks uploads with GOOGLE_PHOTOS_ALLOW_DESTRUCTIVE=0 and keeps the reversible writes", async () => {
+    connected();
+    const off = { GOOGLE_PHOTOS_ALLOW_DESTRUCTIVE: "0" };
+    expect((await cli(app, ["upload-from-url", "--urls", "https://example.com/a.jpg", "--confirm", "--dry-run"], { env: off })).code).toBe(2);
+    expect((await cli(app, ["update-album", "--album-id", "a", "--title", "Trip", "--dry-run"], { env: off })).code).toBe(0);
   });
 
-  it("marks a scalar array repeatable and an object array json", () => {
-    const flags = flagsFor({
-      ids: z.array(z.string()).optional(),
-      items: z.array(z.object({ url: z.string() })).optional(),
-    });
-    expect(flags.find((f) => f.key === "ids")).toMatchObject({ kind: "string", repeatable: true });
-    expect(flags.find((f) => f.key === "items")).toMatchObject({ kind: "json", repeatable: true });
-  });
-});
-
-describe("parseArgs", () => {
-  const flags = flagsFor({
-    title: z.string(),
-    limit: z.number().optional(),
-    confirm: z.boolean().optional(),
-    ids: z.array(z.string()).optional(),
-    filters: z.object({ media_type: z.string() }).optional(),
-    media_type: z.enum(["photo", "video"]).optional(),
+  it("calls a run with no account connected not configured, exit 10", async () => {
+    nothing();
+    expect((await cli(app, ["list-albums"], { env })).code).toBe(EXIT.notConfigured);
   });
 
-  it("accepts --flag value and --flag=value alike", () => {
-    expect(parseArgs(["--title", "hi"], flags)).toEqual({ title: "hi" });
-    expect(parseArgs(["--title=hi"], flags)).toEqual({ title: "hi" });
+  it("keeps 1.2's `auth` beside `login`, and both say what they need first", async () => {
+    nothing();
+    const auth = await cli(app, ["auth"], { env });
+    expect(auth.code).toBe(EXIT.notConfigured);
+    expect(auth.stderr).toContain("GOOGLE_PHOTOS_CLIENT_ID");
+    expect((await cli(app, ["login"], { env })).code).toBe(EXIT.notConfigured);
   });
 
-  it("accepts the underscore spelling of a flag", () => {
-    expect(parseArgs(["--media_type", "video"], flags)).toEqual({ media_type: "video" });
+  it("finds the tool for the words people type, not only the ones the tools use", async () => {
+    const first = async (words: string[]) => (await cli(app, ["which", ...words], { env })).stdout.trim().split("\n")[0];
+    expect(await first(["put", "photos", "in", "an", "album"])).toContain("add-to-album");
+    expect(await first(["let", "me", "choose", "photos"])).toContain("start-pick-session");
   });
 
-  it("treats a boolean as a bare switch", () => {
-    expect(parseArgs(["--title", "hi", "--confirm"], flags)).toEqual({ title: "hi", confirm: true });
-    expect(parseArgs(["--confirm=false"], flags)).toEqual({ confirm: false });
-  });
-
-  it("coerces numbers, and refuses ones that are not", () => {
-    expect(parseArgs(["--limit", "25"], flags)).toEqual({ limit: 25 });
-    expect(() => parseArgs(["--limit", "many"], flags)).toThrow(/expects a number/);
-  });
-
-  it("parses a json flag, and refuses malformed json", () => {
-    expect(parseArgs(['--filters={"media_type":"PHOTO"}'], flags)).toEqual({
-      filters: { media_type: "PHOTO" },
-    });
-    expect(() => parseArgs(["--filters", "{oops"], flags)).toThrow(/expects JSON/);
-  });
-
-  it("collects a repeatable flag into an array", () => {
-    expect(parseArgs(["--ids", "a", "--ids", "b"], flags)).toEqual({ ids: ["a", "b"] });
-  });
-
-  it("checks an enum against its choices", () => {
-    expect(() => parseArgs(["--media-type", "gif"], flags)).toThrow(/expects one of/);
-  });
-
-  it("fills the first required flag from a bare argument", () => {
-    expect(parseArgs(["Holiday 2026"], flags)).toEqual({ title: "Holiday 2026" });
-  });
-
-  it("wraps a bare argument when the required flag is repeatable", () => {
-    const repeatable = flagsFor({ media_item_ids: z.array(z.string()) });
-    expect(parseArgs(["abc123"], repeatable)).toEqual({ media_item_ids: ["abc123"] });
-  });
-
-  it("refuses an unknown option rather than dropping it", () => {
-    expect(() => parseArgs(["--nope", "x"], flags)).toThrow(/Unknown option/);
-  });
-
-  it("refuses a second bare argument", () => {
-    expect(() => parseArgs(["one", "two"], flags)).toThrow(/Unexpected argument/);
+  it("passes slipway check", async () => {
+    const report = await checkApp(app, { env });
+    expect(report.findings.filter((finding) => finding.level === "error")).toEqual([]);
   });
 });
 
-describe("parity with the MCP surface", () => {
-  it("routes every tool name, in both spellings", () => {
-    for (const tool of ALL_TOOLS) {
-      expect(isCliCommand([tool.name])).toBe(true);
-      expect(isCliCommand([tool.name.replace(/_/g, "-")])).toBe(true);
-    }
+describe("Google's errors keep their exit codes and their hints", () => {
+  it.each([
+    [401, "UNAUTHENTICATED", EXIT.auth],
+    [403, "PERMISSION_DENIED", EXIT.auth],
+    [404, "NOT_FOUND", EXIT.notFound],
+    [429, "RESOURCE_EXHAUSTED", EXIT.rateLimited],
+    [400, "INVALID_ARGUMENT", EXIT.usage],
+    [500, "INTERNAL", EXIT.api],
+  ])("HTTP %i %s exits %i", (status, reason, code) => {
+    const error = toSlipway(new PhotosError("GET /albums: failed", status, reason, "What to do next."));
+    expect(error.exitCode).toBe(code);
+    expect(error.hint).toBe("What to do next.");
+    expect(error.details).toMatchObject({ reason });
   });
 
-  it("builds flags for every tool without throwing", () => {
-    for (const tool of ALL_TOOLS) {
-      expect(() => flagsFor(tool.schema)).not.toThrow();
-    }
-  });
-
-  it("gives every schema key a flag", () => {
-    for (const tool of ALL_TOOLS) {
-      expect(flagsFor(tool.schema)).toHaveLength(Object.keys(tool.schema).length);
-    }
-  });
-
-  it("leaves the server's own flags alone", () => {
-    expect(isCliCommand(["--http"])).toBe(false);
-    expect(isCliCommand(["--version"])).toBe(false);
-    expect(isCliCommand([])).toBe(false);
-  });
-
-  /**
-   * `auth` and `doctor` are real commands but are not tools, so the dispatch in
-   * index.ts must not route them here. It lets them through to their own
-   * handlers instead, and the OAuth setup is the first thing anyone runs.
-   */
-  it("leaves the server's own subcommands alone", () => {
-    expect(isCliCommand(["auth"])).toBe(false);
-    expect(isCliCommand(["doctor"])).toBe(false);
+  it("calls a refused or failed sign-in an auth error", () => {
+    expect(toSlipway(new AuthError("Authorisation refused: access_denied")).exitCode).toBe(EXIT.auth);
   });
 });
 
 describe("documentation stays in step with the code", () => {
   const read = (p: string): string => readFileSync(new URL(p, import.meta.url), "utf-8");
-  const names = (text: string): Set<string> => new Set(text.match(/GOOGLE_PHOTOS_[A-Z_]+/g) ?? []);
+  const names = (text: string): Set<string> => new Set((text.match(/GOOGLE_PHOTOS_[A-Z_]+/g) ?? []).filter((name) => !name.endsWith("_")));
+  const source = (dir: string): string =>
+    readdirSync(new URL(dir, import.meta.url), { withFileTypes: true })
+      .map((entry) => (entry.isDirectory() ? source(`${dir}${entry.name}/`) : entry.name.endsWith(".ts") ? read(`${dir}${entry.name}`) : ""))
+      .join("\n");
+
+  /** Every variable the server reads: this repo's code, and Slipway's as agent-context lists them. */
+  const used = async (): Promise<Set<string>> => {
+    const context = JSON.parse((await cli(app, ["agent-context"], { env })).stdout);
+    return new Set([...names(source("../src/")), ...context.settings.map((setting: { env: string }) => setting.env)]);
+  };
 
   /**
    * Five variables shipped undocumented and three never reached `--help`, which
    * is the kind of drift nobody notices because both sides look complete on
    * their own.
    */
-  it("documents every environment variable the code reads", () => {
-    const used = names(["config.ts", "transport/http.ts"].map((f) => read(`../src/${f}`)).join("\n"));
+  it("documents every environment variable the code reads", async () => {
     const documented = names(read("../README.md"));
-    expect([...used].filter((v) => !documented.has(v))).toEqual([]);
+    expect([...(await used())].filter((v) => !documented.has(v))).toEqual([]);
   });
 
-  it("lists every environment variable in --help", () => {
-    const used = names(["config.ts", "transport/http.ts"].map((f) => read(`../src/${f}`)).join("\n"));
-    const helped = names(read("../src/index.ts"));
-    // The help groups the three HTTP ones as `GOOGLE_PHOTOS_HTTP_PORT / _HOST / _TOKEN`.
-    const shorthand = new Set(["GOOGLE_PHOTOS_HTTP_HOST", "GOOGLE_PHOTOS_HTTP_TOKEN"]);
-    expect([...used].filter((v) => !helped.has(v) && !shorthand.has(v))).toEqual([]);
+  it("lists every environment variable in --help", async () => {
+    const help = (await cli(app, ["--help"], { env })).stdout;
+    // The help groups the HTTP ones as `GOOGLE_PHOTOS_HTTP_PORT / _HOST / _TOKEN / _ALLOWED_ORIGINS`.
+    const shorthand = new Set(["GOOGLE_PHOTOS_HTTP_HOST", "GOOGLE_PHOTOS_HTTP_TOKEN", "GOOGLE_PHOTOS_HTTP_ALLOWED_ORIGINS"]);
+    expect([...(await used())].filter((v) => !help.includes(v) && !shorthand.has(v))).toEqual([]);
   });
 
   /**
@@ -193,27 +160,5 @@ describe("documentation stays in step with the code", () => {
       .map((m) => m[1] as string)
       .filter((a) => !slugs.has(a));
     expect(dead).toEqual([]);
-  });
-});
-
-describe("--select keeps every path, not the last one", () => {
-  it("keeps both fields when two paths share a head", () => {
-    const data = { items: [{ id: "abc", filename: "IMG_1.jpg", mimeType: "image/jpeg" }] };
-    expect(selectFields(data, ["items.id", "items.filename"])).toEqual({
-      items: [{ id: "abc", filename: "IMG_1.jpg" }],
-    });
-  });
-
-  it("groups at every depth", () => {
-    expect(selectFields({ a: { b: { c: 1, d: 2, e: 3 } } }, ["a.b.c", "a.b.e"])).toEqual({
-      a: { b: { c: 1, e: 3 } },
-    });
-  });
-
-  it("mixes a scalar with nested paths", () => {
-    expect(selectFields({ x: 1, y: { z: 2, w: 3 } }, ["x", "y.z", "y.w"])).toEqual({
-      x: 1,
-      y: { z: 2, w: 3 },
-    });
   });
 });

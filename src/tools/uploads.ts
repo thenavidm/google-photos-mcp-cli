@@ -18,6 +18,7 @@ import { z } from "zod";
 import { defineTool, confirmArg, type AnyToolSpec , accountArg } from "./kit.js";
 import { shapeAlbum, shapeItem, type RawAlbum, type RawMediaItem } from "../format/items.js";
 import type { ToolContext } from "./kit.js";
+import { ApiError } from "@thenavidm/slipway";
 
 const MIME_BY_EXT: Record<string, string> = {
   ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".gif": "image/gif",
@@ -187,7 +188,7 @@ export const uploadTools: AnyToolSpec[] = [
         method: "POST",
         body: { album: { title: args.title } },
       });
-      if (!album.id) throw new Error("The album was not created, so nothing was uploaded.");
+      if (!album.id) throw new ApiError("The album was not created, so nothing was uploaded.");
 
       const entries: { uploadToken: string; filename: string; description?: string }[] = [];
       const failed: { url: string; reason: string }[] = [];

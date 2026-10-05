@@ -9,6 +9,7 @@
 import { z } from "zod";
 import { defineTool, clamp, pageArgs, type AnyToolSpec , accountArg } from "./kit.js";
 import { page, shapeItem, URL_NOTE, type RawMediaItem } from "../format/items.js";
+import { ApiError, UsageError } from "@thenavidm/slipway";
 
 /** Google's content categories, as of the current Library API reference. */
 export const CONTENT_CATEGORIES = [
@@ -89,7 +90,7 @@ export const mediaTools: AnyToolSpec[] = [
         if (args.start_date || args.end_date) {
           const toParts = (iso: string): { year: number; month: number; day: number } => {
             const [y, m, d] = iso.split("-").map(Number);
-            if (!y || !m || !d) throw new Error(`Dates must look like YYYY-MM-DD. Got "${iso}".`);
+            if (!y || !m || !d) throw new UsageError(`Dates must look like YYYY-MM-DD. Got "${iso}".`);
             return { year: y, month: m, day: d };
           };
           filters.dateFilter = {
@@ -239,7 +240,7 @@ export const mediaTools: AnyToolSpec[] = [
         "library",
         `/mediaItems/${encodeURIComponent(args.media_item_id)}`,
       );
-      if (!item.baseUrl) throw new Error("That media item has no downloadable URL.");
+      if (!item.baseUrl) throw new ApiError("That media item has no downloadable URL.");
       const isVideo = item.mimeType?.startsWith("video/") || Boolean(item.mediaMetadata?.video);
       // A video needs =dv; a photo size suffix on a video returns a still
       // frame, which looks like a corrupt download rather than a wrong flag.

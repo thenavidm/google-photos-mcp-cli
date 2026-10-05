@@ -1,29 +1,7 @@
 /**
- * Assembling the server.
- *
- * Tools, plus the two things most MCP servers skip and clients genuinely use:
- * resources, so a client can pull the context it needs without spending a tool
- * call, and prompts, so the workflows this server is good at are one click
- * rather than something the user has to know to ask for.
+ * The words a client reads: server instructions, the guides served as
+ * resources, and the prompts. Moved verbatim from the v1 server.
  */
-
-import { createRequire } from "node:module";
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { ClientPool } from "./api/pool.js";
-import { loadConfig, isConfigured, type Config } from "./config.js";
-import { WriteGuard } from "./safety.js";
-import { ALL_TOOLS } from "./tools/index.js";
-import { makeContext, register } from "./tools/kit.js";
-
-/**
- * Read from package.json rather than repeated here.
- *
- * A hardcoded copy silently drifts: a release bumps package.json and leaves
- * this behind, so `--version` and `doctor` answer for a build that is not the
- * one running.
- */
-const require = createRequire(import.meta.url);
-export const VERSION: string = (require("../package.json") as { version: string }).version;
 
 export const INSTRUCTIONS = `Tools for Google Photos: picking photos from the user's library, uploading, and organising albums.
 
@@ -41,60 +19,9 @@ Five things worth knowing before calling anything:
 
 Start with auth_status to confirm the connection, describe_filter_capabilities before searching, or start_pick_session when the user wants to work with a photo they already have.`;
 
-export type BuiltServer = {
-  server: McpServer;
-  pool: ClientPool;
-  config: Config;
-  toolCount: number;
-};
-
-export function buildServer(config: Config = loadConfig()): BuiltServer {
-  const pool = new ClientPool(config);
-  const guard = new WriteGuard(config);
-
-  const server = new McpServer({ name: "google-photos", version: VERSION }, { instructions: INSTRUCTIONS });
-
-  // A read-only server should not advertise writes it will refuse.
-  const tools = ALL_TOOLS.filter((tool) => !guard.readOnly || tool.risk === "read");
-  for (const tool of tools) {
-    // Resolved per call, because which account acts depends on the arguments.
-    register(server, (hint) => makeContext(pool, hint, config, guard), tool);
-  }
-
-  registerResources(server, config);
-  registerPrompts(server);
-
-  return { server, pool, config, toolCount: tools.length };
-}
-
-/**
- * Resources: the context a model needs about Google Photos itself.
- *
- * The scope situation is the single thing most likely to make a model draw a
- * wrong conclusion, so it gets a resource rather than living only in a tool
- * description a model may never read.
- */
-function registerResources(server: McpServer, config: Config): void {
-  server.resource("google-photos-status", "google-photos://status", async (uri) => ({
-    contents: [
-      {
-        uri: uri.href,
-        mimeType: "application/json",
-        text: JSON.stringify(
-          { configured: isConfigured(config), read_only: config.readOnly, version: VERSION },
-          null,
-          2,
-        ),
-      },
-    ],
-  }));
-
-  server.resource("google-photos-capabilities", "google-photos://capabilities", async (uri) => ({
-    contents: [
-      {
-        uri: uri.href,
-        mimeType: "text/markdown",
-        text: `# What the Google Photos API can and cannot do
+/** Resources whose text never changes. */
+export const RESOURCES = [
+  { name: "google-photos-capabilities", uri: "google-photos://capabilities", mimeType: "text/markdown", text: `# What the Google Photos API can and cannot do
 
 ## The 2025 change, and why this matters
 On **1 April 2025** Google removed \`photoslibrary\`, \`photoslibrary.readonly\` and
@@ -144,65 +71,29 @@ describe. Every read is filtered to what this app created.
   \`=dv\` for video). It is not a shareable link
 - Quota is two separate daily budgets per Google Cloud project, both resetting at midnight
   UTC: 10,000 API requests, and 75,000 media-byte requests. Fetching a photo's bytes spends
-  the second, not the first`,
-      },
-    ],
-  }));
-}
+  the second, not the first` },
+];
 
-/** Prompts: the workflows worth having one click away. */
-function registerPrompts(server: McpServer): void {
-  server.prompt("pick-and-work", "Have the user choose photos, then do something with them", () => ({
-    messages: [
-      {
-        role: "user",
-        content: {
-          type: "text",
-          text: `I want to work with some photos from my Google Photos library.
+export const PROMPTS = [
+  { name: "pick-and-work", description: "Have the user choose photos, then do something with them", text: `I want to work with some photos from my Google Photos library.
 
 1. Call start_pick_session and give me the picker_uri. Then stop and wait for me.
 2. Once I say I am done, poll check_pick_session until ready is true.
 3. Call list_picked_media and tell me what I chose: how many, what kind, when they were taken.
 
-Then ask me what I want done with them before doing anything else. Do not upload, copy or share anything until I have said so.`,
-        },
-      },
-    ],
-  }));
-
-  server.prompt("build-album", "Create an album from a set of image URLs", () => ({
-    messages: [
-      {
-        role: "user",
-        content: {
-          type: "text",
-          text: `Help me build a Google Photos album.
+Then ask me what I want done with them before doing anything else. Do not upload, copy or share anything until I have said so.` },
+  { name: "build-album", description: "Create an album from a set of image URLs", text: `Help me build a Google Photos album.
 
 Ask me for the album title and the image URLs if I have not given them.
 
 Before uploading anything, show me the exact list you are about to upload and how many there are, and wait for me to confirm. Uploading cannot be undone through the API: there is no delete endpoint, so anything wrong has to be removed by hand.
 
-Once I confirm, use create_album_with_media so a failed upload does not leave an empty album behind. Report anything that failed and why, rather than only the successes.`,
-        },
-      },
-    ],
-  }));
-
-  server.prompt("diagnose", "Work out why Google Photos is not responding", () => ({
-    messages: [
-      {
-        role: "user",
-        content: {
-          type: "text",
-          text: `Something is wrong with my Google Photos connection. Work out what.
+Once I confirm, use create_album_with_media so a failed upload does not leave an empty album behind. Report anything that failed and why, rather than only the successes.` },
+  { name: "diagnose", description: "Work out why Google Photos is not responding", text: `Something is wrong with my Google Photos connection. Work out what.
 
 1. auth_status. Report which account it is, and whether any scope is missing.
 2. If it is connected, list_albums with limit 1 to confirm a real call succeeds.
 3. Read the google-photos://capabilities resource before concluding anything is broken.
 
-Be careful to distinguish three different things: a genuine failure, a grant that needs re-consenting, and the API simply not offering what was asked for. An empty result is usually the third. Tell me which of the three it is and the one thing I should do next.`,
-        },
-      },
-    ],
-  }));
-}
+Be careful to distinguish three different things: a genuine failure, a grant that needs re-consenting, and the API simply not offering what was asked for. An empty result is usually the third. Tell me which of the three it is and the one thing I should do next.` },
+];

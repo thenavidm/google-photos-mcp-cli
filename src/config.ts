@@ -1,4 +1,5 @@
 import { createRequire } from "node:module";
+import { NotConfiguredError, UsageError } from "@thenavidm/slipway";
 
 /**
  * Resolving credentials, and the multi-account model.
@@ -129,13 +130,13 @@ function parseAccounts(raw: string | undefined): Account[] {
   } catch {
     // Loud, because the alternative is a server that starts with zero accounts
     // and reports "not configured" on every call.
-    throw new Error(
+    throw new NotConfiguredError(
       "GOOGLE_PHOTOS_ACCOUNTS is not valid JSON. It should be an array like " +
         '[{"name":"personal","client_id":"...","client_secret":"...","refresh_token":"..."}]',
     );
   }
   if (!Array.isArray(parsed)) {
-    throw new Error("GOOGLE_PHOTOS_ACCOUNTS must be a JSON array of accounts.");
+    throw new NotConfiguredError("GOOGLE_PHOTOS_ACCOUNTS must be a JSON array of accounts.");
   }
 
   const accounts: Account[] = [];
@@ -148,7 +149,7 @@ function parseAccounts(raw: string | undefined): Account[] {
       .toLowerCase();
 
     if (!clientId || !clientSecret || !refreshToken) {
-      throw new Error(
+      throw new NotConfiguredError(
         `GOOGLE_PHOTOS_ACCOUNTS entry "${name}" is missing client_id, client_secret or refresh_token.`,
       );
     }
@@ -203,7 +204,7 @@ export function loadConfig(): Config {
  */
 export function selectAccount(config: Config, hint?: string): Account {
   if (config.accounts.length === 0) {
-    throw new Error(
+    throw new NotConfiguredError(
       "No Google Photos account is configured. Set GOOGLE_PHOTOS_CLIENT_ID, GOOGLE_PHOTOS_CLIENT_SECRET and GOOGLE_PHOTOS_REFRESH_TOKEN, or GOOGLE_PHOTOS_ACCOUNTS for several. Run `google-photos-mcp auth` to obtain a refresh token.",
     );
   }
@@ -217,11 +218,11 @@ export function selectAccount(config: Config, hint?: string): Account {
     );
     if (partial.length === 1) return partial[0] as Account;
     if (partial.length > 1) {
-      throw new Error(
+      throw new UsageError(
         `"${hint}" matches more than one account (${partial.map((a) => a.name).join(", ")}). Name one exactly.`,
       );
     }
-    throw new Error(
+    throw new UsageError(
       `No account called "${hint}". Configured: ${config.accounts.map((a) => a.name).join(", ")}. Call list_accounts to see them.`,
     );
   }
