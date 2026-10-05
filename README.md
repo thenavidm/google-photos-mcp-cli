@@ -100,7 +100,7 @@ is the tool name with dashes.
 | Sign in once | `google-photos-cli login` | not a tool |
 | Check your setup | `google-photos-cli doctor` | not a tool |
 
-All 26 are in [section 7](#7-tools-).
+All 26 are in [section 7](#7-tools-%EF%B8%8F).
 
 ## Contents
 
@@ -112,7 +112,7 @@ All 26 are in [section 7](#7-tools-).
 | 4 | [Connect your client](#4-connect-your-client-) | Every client, copy and paste |
 | 5 | [Check it worked](#5-check-it-worked-) | One command |
 | 6 | [Which surface, and what each costs](#6-which-surface-and-what-each-costs) | Measured in Claude Code, and how to spend less |
-| 7 | [Tools](#7-tools-) | All 26, grouped by what they reach |
+| 7 | [Tools](#7-tools-%EF%B8%8F) | All 26, grouped by what they reach |
 | 8 | [Notes and gotchas](#8-notes-and-gotchas-) | What the API will not do |
 | 9 | [Troubleshooting](#9-troubleshooting-) | Symptom to cause |
 | 10 | [FAQ](#10-faq-) | The questions people actually ask |
