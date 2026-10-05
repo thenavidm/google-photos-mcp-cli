@@ -40,6 +40,8 @@ describe("Google Photos on Slipway", () => {
     expect(run.code).toBe(2);
     expect(JSON.parse(run.stderr).code).toBe("refused");
     expect(run.stderr).toContain("--confirm");
+    // 1.x's words for why, not a generic warning: nothing uploaded here is public.
+    expect(JSON.parse(run.stderr).error).toContain("upload_from_url cannot be undone through the API");
   });
 
   it("asks for approval on the four uploads and on no other tool", async () => {
@@ -134,11 +136,13 @@ describe("documentation stays in step with the code", () => {
     expect([...(await used())].filter((v) => !documented.has(v))).toEqual([]);
   });
 
-  it("lists every environment variable in --help", async () => {
+  // Since Slipway 0.1.15 the help names the settings that connect an account and the safety
+  // switches, and counts the rest, which agent-context describes one by one.
+  it("names every environment variable in --help or agent-context", async () => {
     const help = (await cli(app, ["--help"], { env })).stdout;
-    // The help groups the HTTP ones as `GOOGLE_PHOTOS_HTTP_PORT / _HOST / _TOKEN / _ALLOWED_ORIGINS`.
-    const shorthand = new Set(["GOOGLE_PHOTOS_HTTP_HOST", "GOOGLE_PHOTOS_HTTP_TOKEN", "GOOGLE_PHOTOS_HTTP_ALLOWED_ORIGINS"]);
-    expect([...(await used())].filter((v) => !help.includes(v) && !shorthand.has(v))).toEqual([]);
+    const context = JSON.parse((await cli(app, ["agent-context"], { env })).stdout);
+    const described = new Set(context.settings.map((setting: { env: string }) => setting.env));
+    expect([...(await used())].filter((v) => !help.includes(v) && !described.has(v))).toEqual([]);
   });
 
   /**

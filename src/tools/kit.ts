@@ -134,6 +134,9 @@ export function defineTool<S extends Shape>(spec: ToolSpec<S>): Tool<AppContext>
     description: spec.description,
     input: z.object(shape),
     risk: spec.risk,
+    // 1.x's words for why an upload needs confirming, which the refusal and the approval form both say:
+    // the Library API has no delete, so a wrong upload is removed by hand in the app.
+    ...(spec.risk === "destructive" ? { consequence: "cannot be undone through the API" } : {}),
     ...(spec.idempotent !== undefined ? { idempotent: spec.idempotent } : {}),
     ...(spec.summary ? { summary: spec.summary as (args: Record<string, unknown>) => string } : {}),
     // Which account acts depends on the arguments, so the context is bound per call.

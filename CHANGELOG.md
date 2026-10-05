@@ -2,7 +2,7 @@
 
 | Component | Version | Checked |
 |---|---|---|
-| Slipway | ^0.1.9 | 2026-10-05 |
+| Slipway | ^0.1.17 | 2026-10-05 |
 | MCP TypeScript SDK, through Slipway | 2.3.0 | 2026-10-05 |
 | zod | ^4.2.0 | 2026-10-05 |
 | Node | >=22 | 2026-10-05 |
@@ -10,6 +10,11 @@
 | Google Photos Library API | v1 | 2026-09-04 |
 | actions/checkout | v7 | 2026-09-04 |
 | actions/setup-node | v7 | 2026-09-04 |
+
+## 2.0.1, 2026-10-05
+
+- **A refusal and the approval form say what the call can do again.** 2.0.0 said every confirmed call "is public or cannot be undone", Slipway's words for a call it knows nothing more about. Both say again what 1.2 said, that the call cannot be undone through the API, and a test holds them to it.
+- **Built on Slipway 0.1.17**, which a fresh install of 2.0.0 already used. Since the Slipway 2.0.0 was measured on, 0.1.9, `which` prints a title once where a description opens with it and reads an argument by its own words, and the general help counts the tuning settings instead of naming them, with `agent-context` describing each. [Slipway's changelog](https://github.com/thenavidm/slipway/blob/main/CHANGELOG.md) lists the rest.
 
 ## 2.0.0, 2026-10-05
 
